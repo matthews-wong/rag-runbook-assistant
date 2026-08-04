@@ -42,6 +42,21 @@ class RetrievedChunk:
     score: float
 
 
+@dataclass(frozen=True)
+class RunbookInfo:
+    """Summary of one indexed runbook document.
+
+    Attributes:
+        source: Filename of the runbook (e.g. ``redis-oom.md``).
+        chunks: Number of indexed chunks the file contributed.
+        sections: Section titles for those chunks, in document order.
+    """
+
+    source: str
+    chunks: int
+    sections: list[str]
+
+
 def chunk_markdown(source: str, content: str) -> list[Chunk]:
     """Split one markdown document into heading-delimited chunks.
 
@@ -128,16 +143,36 @@ class RunbookIndex:
         """Number of indexed chunks."""
         return len(self._chunks)
 
-    def retrieve(self, query: str, top_k: int = 3) -> list[RetrievedChunk]:
+    def list_runbooks(self) -> list[RunbookInfo]:
+        """Summarize indexed runbooks, grouped by source filename.
+
+        Returns:
+            One :class:`RunbookInfo` per source file, sorted by filename. Within
+            each entry the section titles preserve document order.
+        """
+        grouped: dict[str, list[str]] = {}
+        for chunk in self._chunks:
+            grouped.setdefault(chunk.source, []).append(chunk.title)
+        return [
+            RunbookInfo(source=source, chunks=len(titles), sections=titles)
+            for source, titles in sorted(grouped.items())
+        ]
+
+    def retrieve(
+        self, query: str, top_k: int = 3, min_score: float = 0.0
+    ) -> list[RetrievedChunk]:
         """Return the ``top_k`` chunks most similar to ``query``.
 
-        Chunks with a similarity of zero (no shared vocabulary) are excluded,
-        so the result may be shorter than ``top_k`` — including empty when the
-        query shares no terms with the corpus.
+        Chunks with a similarity of zero (no shared vocabulary) are always
+        excluded, so the result may be shorter than ``top_k`` — including empty
+        when the query shares no terms with the corpus. A positive ``min_score``
+        tightens this further, dropping weakly-matching chunks.
 
         Args:
             query: Natural-language question.
             top_k: Maximum number of chunks to return. Values below 1 yield [].
+            min_score: Minimum cosine similarity a chunk must reach to be
+                included. Defaults to 0.0 (only the zero-score exclusion applies).
 
         Returns:
             Retrieved chunks ordered by descending similarity score.
@@ -154,7 +189,8 @@ class RunbookIndex:
         results: list[RetrievedChunk] = []
         for i in ranked[:top_k]:
             score = float(scores[i])
-            if score <= 0.0:
+            # Scores are descending, so the first sub-threshold hit ends the run.
+            if score <= 0.0 or score < min_score:
                 break
             results.append(RetrievedChunk(chunk=self._chunks[i], score=score))
         return results
