@@ -136,6 +136,52 @@ def test_retrieval_irrelevant_query_returns_no_zero_score_chunks() -> None:
     assert all(r.score > 0.0 for r in results)
 
 
+def test_retrieval_min_score_drops_weak_matches() -> None:
+    settings = get_settings()
+    index = build_index(settings.runbooks_dir)
+
+    query = "redis out of memory evictions"
+    unfiltered = index.retrieve(query, top_k=5)
+    assert len(unfiltered) >= 2, "need multiple hits to exercise the threshold"
+
+    # A threshold just above the weakest hit must drop at least that chunk
+    # while keeping the strongest.
+    weakest = unfiltered[-1].score
+    threshold = weakest + 1e-6
+    filtered = index.retrieve(query, top_k=5, min_score=threshold)
+
+    assert filtered, "the top match should survive the threshold"
+    assert all(r.score >= threshold for r in filtered)
+    assert len(filtered) < len(unfiltered)
+
+
+def test_retrieval_min_score_above_all_returns_nothing() -> None:
+    settings = get_settings()
+    index = build_index(settings.runbooks_dir)
+
+    # Cosine similarity is bounded by 1.0, so nothing can clear a min_score > 1.
+    assert index.retrieve("redis oom", top_k=5, min_score=1.01) == []
+
+
+def test_list_runbooks_covers_corpus() -> None:
+    settings = get_settings()
+    index = build_index(settings.runbooks_dir)
+
+    infos = index.list_runbooks()
+    sources = [i.source for i in infos]
+
+    # Sorted by filename and one entry per source file.
+    assert sources == sorted(sources)
+    assert len(sources) == len(set(sources))
+    assert "redis-oom.md" in sources
+
+    for info in infos:
+        assert info.chunks == len(info.sections)
+        assert info.chunks >= 1
+    # Chunk counts must reconcile with the flat corpus size.
+    assert sum(i.chunks for i in infos) == index.size
+
+
 def test_empty_corpus_index_raises() -> None:
     with pytest.raises(ValueError):
         RunbookIndex([])
