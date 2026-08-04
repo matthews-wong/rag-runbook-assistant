@@ -1,0 +1,17 @@
+[project]
+name = "rag-runbook-assistant"
+version = "0.1.0"
+description = "RAG API that answers on-call questions from runbook markdown using TF-IDF retrieval and Claude."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+# Ensure the repo root is importable so `from app... import ...` resolves.
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
