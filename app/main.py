@@ -3,6 +3,7 @@
 Endpoints:
     GET  /health    — liveness + index status.
     GET  /runbooks  — list the indexed runbooks and their sections.
+    GET  /search    — retrieval-only: ranked runbook chunks, no LLM synthesis.
     POST /ask       — answer an on-call question from the runbook corpus.
 
 The TF-IDF index is built once at startup and reused across requests.
@@ -13,7 +14,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel, Field
 
 from app.config import Settings, get_settings
@@ -106,6 +107,23 @@ class RunbooksResponse(BaseModel):
     runbooks: list[RunbookSummary]
 
 
+class SearchHit(BaseModel):
+    """A single retrieved chunk in the /search response."""
+
+    source: str
+    title: str
+    score: float
+    text: str
+
+
+class SearchResponse(BaseModel):
+    """Response body for GET /search."""
+
+    query: str
+    count: int
+    results: list[SearchHit]
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     """Report liveness, whether LLM synthesis is enabled, and index size."""
@@ -126,6 +144,48 @@ def runbooks() -> RunbooksResponse:
         for info in _index.list_runbooks()
     ]
     return RunbooksResponse(count=len(summaries), runbooks=summaries)
+
+
+@app.get("/search", response_model=SearchResponse)
+def search(
+    q: str = Query(..., min_length=1, description="The search query."),
+    top_k: int | None = Query(
+        default=None,
+        ge=1,
+        description="Number of runbook chunks to retrieve (defaults to config).",
+    ),
+    min_score: float = Query(
+        default=0.0,
+        ge=0.0,
+        le=_MAX_SIMILARITY,
+        description=(
+            "Discard chunks scoring below this cosine similarity threshold "
+            "(0.0 keeps all non-zero matches)."
+        ),
+    ),
+) -> SearchResponse:
+    """Return ranked runbook chunks for ``q`` without invoking the LLM.
+
+    This is the retrieval half of ``/ask`` exposed on its own: it never contacts
+    the Anthropic API, so callers can inspect *what* the index would ground an
+    answer on (and their scores) with no key, no token cost, and no latency.
+    """
+    assert _index is not None, "Index not initialized"  # set during lifespan
+
+    top_k = top_k or _settings.default_top_k
+    top_k = min(top_k, _settings.max_top_k)
+
+    retrieved = _index.retrieve(q, top_k=top_k, min_score=min_score)
+    results = [
+        SearchHit(
+            source=r.chunk.source,
+            title=r.chunk.title,
+            score=round(r.score, 4),
+            text=r.chunk.text,
+        )
+        for r in retrieved
+    ]
+    return SearchResponse(query=q, count=len(results), results=results)
 
 
 @app.post("/ask", response_model=AskResponse)

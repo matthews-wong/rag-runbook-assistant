@@ -38,6 +38,7 @@ flowchart LR
 ## Features
 
 - **Zero-infrastructure retrieval** — TF-IDF + cosine similarity in memory; no database or embedding service.
+- **Retrieval-only `GET /search`** — inspect the ranked chunks (and their scores) the index would ground an answer on, with no LLM call, no API key, and no token cost.
 - **Graceful degradation** — works without an API key by returning retrieved chunks.
 - **Citations** — every answer reports the runbook sources and similarity scores it drew from.
 - **Heading-aware chunking** — markdown is split on headings so citations map to meaningful sections.
@@ -124,13 +125,34 @@ Example response (with `ANTHROPIC_API_KEY` unset — fallback mode):
 
 With an API key set, `synthesized` is `true` and `answer` is a concise, Claude-written response with inline `[n]` citations referencing the returned sources.
 
+Inspect retrieval only (no LLM call, no API key required):
+
+```bash
+curl "http://localhost:8000/search?q=redis%20out%20of%20memory%20evictions&top_k=3&min_score=0.1"
+```
+
+Example response:
+
+```json
+{
+  "query": "redis out of memory evictions",
+  "count": 2,
+  "results": [
+    {"source": "redis-oom.md", "title": "Mitigation", "score": 0.41, "text": "## Mitigation\n..."},
+    {"source": "redis-oom.md", "title": "Triage", "score": 0.33, "text": "## Triage\n..."}
+  ]
+}
+```
+
+`/search` accepts the same `top_k` and `min_score` controls as `/ask` but never contacts Claude — useful for debugging retrieval or building a UI that ranks sources before spending a synthesis call.
+
 ## Project structure
 
 ```
 rag-runbook-assistant/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py        # FastAPI app: GET /health, POST /ask
+│   ├── main.py        # FastAPI app: GET /health, GET /runbooks, GET /search, POST /ask
 │   ├── rag.py         # ingest, chunk, TF-IDF index, retrieve
 │   ├── synth.py       # Claude synthesis with graceful fallback
 │   └── config.py      # env-based settings (pydantic-settings)

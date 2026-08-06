@@ -84,6 +84,50 @@ def test_ask_no_match_returns_fallback_without_network(client: TestClient) -> No
     assert "No relevant runbook content" in body["answer"]
 
 
+def test_search_returns_ranked_chunks_without_synthesis(client: TestClient) -> None:
+    response = client.get(
+        "/search", params={"q": "redis out of memory evictions", "top_k": 3}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["query"] == "redis out of memory evictions"
+    assert body["count"] == len(body["results"])
+    assert 1 <= body["count"] <= 3
+
+    hits = body["results"]
+    top = hits[0]
+    assert top["source"] == "redis-oom.md"
+    assert top["score"] > 0.0
+    assert top["text"].strip()  # the chunk body is returned for inspection
+    # Scores are ranked best-first.
+    scores = [h["score"] for h in hits]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_search_rejects_blank_query(client: TestClient) -> None:
+    assert client.get("/search", params={"q": ""}).status_code == 422
+
+
+def test_search_rejects_out_of_range_min_score(client: TestClient) -> None:
+    response = client.get(
+        "/search", params={"q": "redis oom", "min_score": 2.0}
+    )
+    assert response.status_code == 422
+
+
+def test_search_min_score_can_exclude_all_matches(client: TestClient) -> None:
+    # Cosine similarity is bounded by 1.0, so a threshold of 1.0 drops every hit.
+    response = client.get(
+        "/search", params={"q": "redis is out of memory", "min_score": 1.0}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == 0
+    assert body["results"] == []
+
+
 def test_ask_returns_scored_citations(client: TestClient) -> None:
     response = client.post(
         "/ask", json={"question": "redis out of memory evictions", "top_k": 2}
