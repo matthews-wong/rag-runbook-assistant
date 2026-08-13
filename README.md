@@ -43,7 +43,7 @@ flowchart LR
 - **Citations** — every answer reports the runbook sources and similarity scores it drew from.
 - **Heading-aware chunking** — markdown is split on headings so citations map to meaningful sections.
 - **Typed API** — FastAPI + Pydantic request/response models with automatic OpenAPI docs at `/docs`.
-- **Tested and linted** — pytest covers chunking and retrieval (no network); ruff enforces style in CI.
+- **Tested and linted** — pytest covers chunking, retrieval, and the HTTP API (no network — Claude is never called in tests); ruff enforces style in CI.
 
 ## Tech stack
 
@@ -158,7 +158,8 @@ rag-runbook-assistant/
 │   └── config.py      # env-based settings (pydantic-settings)
 ├── data/runbooks/     # sample runbook corpus (markdown)
 ├── tests/
-│   └── test_rag.py    # chunking + retrieval tests (no network)
+│   ├── test_rag.py    # chunking + retrieval tests (no network)
+│   └── test_api.py    # HTTP-level endpoint tests (no network)
 ├── .github/workflows/ci.yml
 ├── Dockerfile
 ├── requirements.txt
@@ -169,7 +170,7 @@ rag-runbook-assistant/
 
 ## Testing
 
-Tests cover chunking and retrieval only and make no network calls (the Claude API is never contacted in tests):
+Tests cover chunking, retrieval, and the HTTP API, and make no network calls (the Claude API is never contacted in tests):
 
 ```bash
 pytest

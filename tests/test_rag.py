@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from app.config import get_settings
-from app.rag import RunbookIndex, build_index, chunk_markdown, load_chunks
+from app.rag import Chunk, RunbookIndex, build_index, chunk_markdown, load_chunks
 
 _SAMPLE = """\
 Intro preamble text before any heading.
@@ -185,3 +185,27 @@ def test_list_runbooks_covers_corpus() -> None:
 def test_empty_corpus_index_raises() -> None:
     with pytest.raises(ValueError):
         RunbookIndex([])
+
+
+def test_retrieval_top_k_exceeding_corpus_returns_all_matches() -> None:
+    # A hand-built three-chunk corpus with disjoint vocabulary makes the
+    # expected result count exact and independent of the sample runbooks.
+    index = RunbookIndex(
+        [
+            Chunk(source="a.md", title="A", text="redis memory oom eviction"),
+            Chunk(source="b.md", title="B", text="postgres connection pool idle"),
+            Chunk(source="c.md", title="C", text="certificate tls expiry handshake"),
+        ]
+    )
+
+    # A query sharing a term with every chunk, with top_k far above the corpus
+    # size, must return all three — never index past the end or duplicate.
+    results = index.retrieve("redis postgres certificate", top_k=100)
+    assert len(results) == 3
+    assert {r.chunk.source for r in results} == {"a.md", "b.md", "c.md"}
+
+    # top_k above the corpus size still drops zero-vocabulary chunks: only the
+    # single chunk sharing a term with the query is returned.
+    single = index.retrieve("redis oom", top_k=100)
+    assert len(single) == 1
+    assert single[0].chunk.source == "a.md"
